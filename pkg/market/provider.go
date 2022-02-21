@@ -19,8 +19,10 @@ const (
 	SUBSCRIBE          = "SUBSCRIBE"
 	UNSUBSCRIBE        = "UNSUBSCRIBE"
 
-	MESSAGE_DEPTH_UPDATE = "depthUpdate"
-	MESSAGE_24HR_TICKER  = "24hrTicker"
+	MESSAGE_DEPTH_UPDATE              = "depthUpdate"
+	MESSAGE_24HR_TICKER               = "24hrTicker"
+	MESSAGE_EXECUTION_REPORT          = "executionReport"
+	MESSAGE_OUTBOUND_ACCOUNT_POSITION = "outboundAccountPosition"
 )
 
 type BinanceProvider struct {
@@ -113,6 +115,10 @@ func (bp *BinanceProvider) Provide(e *engine.Engine) {
 						stringToFloat(result["v"].(string)),
 						int64(result["n"].(float64)),
 					)
+				case MESSAGE_EXECUTION_REPORT:
+					e.AcceptExecutionReport()
+				case MESSAGE_OUTBOUND_ACCOUNT_POSITION:
+					e.UpdateAccountInformation()
 				}
 			}
 

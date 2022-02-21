@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -35,7 +36,7 @@ func NewBinanceClient(baseUrl string, apiKey string, signature string) *BinanceC
 	return &BinanceClient{httpClient: &http.Client{}, baseUrl: baseUrl, apiKey: apiKey, signature: signature}
 }
 
-func (bc *BinanceClient) NewOrder(symbol string, side string, type_ string, timeInForce string, quantity float64, price float64) *engine.OrderResponse {
+func (bc *BinanceClient) NewOrder(symbol string, side string, type_ string, timeInForce string, quantity float64, price float64) *engine.Order {
 	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s", bc.baseUrl, URL_ORDER), nil)
 	if err != nil {
 		fmt.Println(err)
@@ -86,7 +87,7 @@ func (bc *BinanceClient) NewOrder(symbol string, side string, type_ string, time
 
 	fmt.Println(responseMap)
 
-	return &engine.OrderResponse{
+	return &engine.Order{
 		ClientOrderId: responseMap["clientOrderId"].(string),
 		CumQty:        responseMap["cumQty"].(string),
 		CumQuote:      responseMap["cumQuote"].(string),
@@ -214,7 +215,7 @@ func (bc *BinanceClient) CancelAllOrders(symbol string) bool {
 	return true
 }
 
-func (bc *BinanceClient) AllOrders(symbol string, startTime int64, endTime int64, limit int) (orders []*engine.OrderResponse) {
+func (bc *BinanceClient) AllOrders(symbol string, startTime int64, endTime int64, limit int) (orders []*engine.Order) {
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", bc.baseUrl, URL_ALL_ORDERS), nil)
 	if err != nil {
 		fmt.Println(err)
@@ -254,7 +255,7 @@ func (bc *BinanceClient) AllOrders(symbol string, startTime int64, endTime int64
 	}
 
 	for _, order := range responseMap {
-		orderResponse := &engine.OrderResponse{
+		orderResponse := &engine.Order{
 			ClientOrderId: order["clientOrderId"].(string),
 			CumQty:        order["cumQty"].(string),
 			CumQuote:      order["cumQuote"].(string),
@@ -277,7 +278,7 @@ func (bc *BinanceClient) AllOrders(symbol string, startTime int64, endTime int64
 	return orders
 }
 
-func (bc *BinanceClient) AccountInformation() *engine.AccountInformationResponse {
+func (bc *BinanceClient) AccountInformation() *engine.AccountInformation {
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", bc.baseUrl, URL_ACCOUNT_INFORMATION), nil)
 	if err != nil {
 		fmt.Println("req")
@@ -329,7 +330,7 @@ func (bc *BinanceClient) AccountInformation() *engine.AccountInformationResponse
 		})
 	}
 
-	return &engine.AccountInformationResponse{
+	return &engine.AccountInformation{
 		MakerCommission:  responseMap["makerCommission"].(float64),
 		TakerCommission:  responseMap["takerCommission"].(float64),
 		BuyerCommission:  responseMap["buyerCommission"].(float64),
@@ -340,6 +341,55 @@ func (bc *BinanceClient) AccountInformation() *engine.AccountInformationResponse
 		AccountType:      responseMap["accountType"].(string),
 		Assets:           assetHoldings,
 	}
+
+}
+
+func (bc *BinanceClient) ListenKey() (string, error) {
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s", bc.baseUrl, URL_ORDER), nil)
+	if err != nil {
+		fmt.Println(err)
+		return "", errors.New("Error creating ListenKey request")
+	}
+
+	req.Header.Add(API_KEY_HEADER, bc.apiKey)
+
+	q := req.URL.Query()
+
+	q.Add("timestamp", strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10))
+
+	e := bc.EncodeWithSignature(q)
+	req.URL.RawQuery = e
+
+	// Fetch Request
+	response, err := bc.httpClient.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		return "", errors.New("Error doing ListenKey request")
+	}
+
+	if err != nil {
+		log.Println(err)
+		return "", errors.New("Error received from ListenKey request")
+	}
+
+	body, err := ioutil.ReadAll(response.Body)
+
+	if err != nil {
+		log.Println(err)
+		return "", errors.New("Error reading body of ListenKey request")
+	}
+
+	responseMap := map[string]string{}
+	err = json.Unmarshal(body, &responseMap)
+
+	if err != nil {
+		log.Println(err)
+		return "", errors.New("Error unmarshalling ListenKey request response")
+	}
+
+	fmt.Println(responseMap)
+
+	return responseMap["listenKey"], nil
 
 }
 

@@ -5,8 +5,11 @@ import (
 )
 
 type Cache struct {
-	LastDepths  *adt.ConcurrentMap
-	LastTickers *adt.ConcurrentMap
+	AccountInformation *AccountInformation
+	LastDepths         *adt.ConcurrentMap
+	LastTickers        *adt.ConcurrentMap
+	ordersIndex        *adt.ConcurrentMap
+	ordersBySymbol     *adt.ConcurrentMap
 }
 
 func NewCache() *Cache {
@@ -42,4 +45,28 @@ func (c *Cache) GetLastDepth(symbol string) *OphrysDepth {
 	}
 
 	return depth.(*OphrysDepth)
+}
+
+func (c *Cache) UpdateAccountInformation(accountInformation *AccountInformation) {
+	c.AccountInformation = accountInformation
+}
+
+func (c *Cache) UpdateOrder(o *Order) {
+	if !c.ordersIndex.Has(o.OrderId) {
+		c.ordersIndex.Put(o.OrderId, o)
+
+		orderIds, hasSymbol := c.ordersBySymbol.Get(o.Symbol)
+
+		if !hasSymbol {
+			orderIds = make([]int, 0)
+			c.ordersBySymbol.Put(o.Symbol, orderIds)
+		}
+
+		c.ordersBySymbol.Put(o.Symbol, append(orderIds.([]int), o.OrderId))
+	}
+
+	order, _ := c.ordersIndex.Get(o.OrderId)
+
+	order.(*Order).Status = o.Status
+
 }

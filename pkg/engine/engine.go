@@ -15,6 +15,7 @@ const (
 	WORKER_DEPTH_HANDLER       = "depthHandler"
 	WORKER_TICKER_STORAGE      = "tickerStorage"
 	WORKER_TICKER_CALCULATIONS = "tickerCalculations"
+	WORKER_TRADING_BOT         = "tradingBot"
 )
 
 var MARKET_DATA_CATEGORIES = []string{
@@ -43,7 +44,7 @@ type OphrysDepth struct {
 	Asks   [][]string `json:"asks"`
 }
 
-type OrderResponse struct {
+type Order struct {
 	ClientOrderId string `json:"clientOrderId"`
 	CumQty        string `json:"cumQty"`
 	CumQuote      string `json:"cumQuote"`
@@ -80,7 +81,7 @@ type CancelOrderResponse struct {
 	Type_         string `json:"type"`
 }
 
-type AccountInformationResponse struct {
+type AccountInformation struct {
 	MakerCommission  float64 `json:"makerCommission"`
 	TakerCommission  float64 `json:"takerCommission"`
 	BuyerCommission  float64 `json:"buyerCommission"`
@@ -120,15 +121,16 @@ type API interface {
 }
 
 type MarketClient interface {
-	AccountInformation() *AccountInformationResponse
-	NewOrder(symbol string, side string, type_ string, timeInForce string, quantity float64, price float64) *OrderResponse
-	AllOrders(symbol string, startTime int64, endTime int64, limit int) []*OrderResponse
+	AccountInformation() *AccountInformation
+	NewOrder(symbol string, side string, type_ string, timeInForce string, quantity float64, price float64) *Order
+	AllOrders(symbol string, startTime int64, endTime int64, limit int) []*Order
 	CancelAllOrders(symbol string) bool
 	CancelOrder(symbol string, orderId int64) *CancelOrderResponse
 }
 
 type Engine struct {
 	marketClient *MarketClient
+	bot          *TradingBot
 	providers    map[string]*Provider
 	storage      *Storage
 	apis         map[string]*API
@@ -151,7 +153,7 @@ func NewEngine(storage *Storage) *Engine {
 		dataChannels[category] = make(chan interface{})
 	}
 
-	return &Engine{
+	e := &Engine{
 		providers:    make(map[string]*Provider),
 		storage:      storage,
 		apis:         make(map[string]*API),
@@ -163,6 +165,10 @@ func NewEngine(storage *Storage) *Engine {
 		cache:        NewCache(),
 		stats:        NewStatisticsCalculationManager(),
 	}
+
+	e.bot = NewTradingBot(e)
+
+	return e
 }
 
 func (e *Engine) EngageAPI(api *API) {
@@ -178,6 +184,8 @@ func (e *Engine) EngageMarketClient(marketClient *MarketClient) {
 }
 
 func (e *Engine) TurnOn() {
+	e.cache.UpdateAccountInformation((*e.marketClient).AccountInformation())
+
 	go func() {
 		for _, provider := range e.providers {
 			(*provider).Provide(e)
@@ -198,6 +206,8 @@ func (e *Engine) TurnOn() {
 	e.newWorkers(3, WORKER_DEPTH_HANDLER, handleDepths, e.depthsChannel())
 	e.newWorkers(3, WORKER_TICKER_STORAGE, storeMarketData, (*e.storage).C())
 	e.newWorkers(6, WORKER_TICKER_CALCULATIONS, handleTicker, e.stats.C())
+	e.newWorkers(6, WORKER_TRADING_BOT, e.bot.HandleNewTicker, e.bot.C())
+
 }
 
 func (e *Engine) newWorkers(n int, name string, f func(*Worker, interface{}), c chan interface{}) {
@@ -235,6 +245,14 @@ func (e *Engine) AcceptTicker(time int64, symbol string, priceChange float32, pr
 	e.tickersChannel() <- ticker
 }
 
+func (e *Engine) AcceptExecutionReport() { //(symbol string, eventTime int64, clientOrderId string, quantity float64, price float64, orderStatus string, orderRejectReason string, orderId string, lastExecutedQuantity float64, comission float64, transactionTime int64, tradeId string) {
+	e.UpdateAccountInformation()
+}
+
+func (e *Engine) UpdateAccountInformation() {
+	e.cache.UpdateAccountInformation((*e.marketClient).AccountInformation())
+}
+
 func (e *Engine) newWorker(name string, f func(*Worker, interface{}), c chan interface{}) {
 	id := uuid.New()
 	w := newWorker(id, name, e, f, c)
@@ -261,8 +279,11 @@ func (e *Engine) depthsChannel() chan interface{} {
 func handleTickers(w *Worker, t interface{}) {
 	ophrysTicker := t.(*OphrysTicker)
 	w.engine.cache.UpdateLastTicker(ophrysTicker)
+	//log.Println(ophrysTicker)
+	w.engine.bot.C() <- ophrysTicker
 	(*w.engine.storage).C() <- ophrysTicker
 	w.engine.stats.C() <- ophrysTicker
+
 }
 
 func handleDepths(w *Worker, d interface{}) {
@@ -305,4 +326,8 @@ func (e *Engine) GetLastTicker(symbol string) *OphrysTicker {
 
 func (e *Engine) GetLastDepth(symbol string) *OphrysDepth {
 	return e.cache.GetLastDepth(symbol)
+}
+
+func (e *Engine) AddStrategyFor(symbol string, strategy *TradingStrategy) {
+	e.bot.AddStrategyFor(symbol, strategy)
 }

@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"log"
 	"ophrys/pkg/adt"
+	"sync"
 )
 
 type StatisticsCalculationManager struct {
@@ -54,6 +54,7 @@ func handleTicker(w *Worker, t interface{}) {
 
 type StatisticsCalculator struct {
 	tickerBuckets map[int]*adt.ConcurrentCircularQueue
+	lock          sync.RWMutex
 	calculations  map[int]map[string]float64
 }
 
@@ -78,6 +79,7 @@ func (sc *StatisticsCalculator) Accept(ticker *OphrysTicker, calcs map[string]fu
 			return o.(*OphrysTicker)
 		})
 
+		sc.lock.Lock()
 		for name, calc := range calcs {
 			_, ok := sc.calculations[bucket]
 			if !ok {
@@ -86,6 +88,13 @@ func (sc *StatisticsCalculator) Accept(ticker *OphrysTicker, calcs map[string]fu
 
 			sc.calculations[bucket][name] = calc(prices)
 		}
+		sc.lock.Unlock()
 	}
-	log.Print(sc.calculations)
+}
+
+func (sc *StatisticsCalculator) CalculationFor(bucket int, name string) float64 {
+	sc.lock.RLock()
+	calc := sc.calculations[bucket][name]
+	sc.lock.RUnlock()
+	return calc
 }
